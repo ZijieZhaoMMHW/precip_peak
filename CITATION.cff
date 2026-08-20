@@ -1,10 +1,10 @@
 cff-version: 1.0
 message: "If you use this software, please cite it as below."
-title: "NPP (Number of Precipitation Peak)"
 authors:
   - family-names: "Zhao"
     given-names: "Zijie"
     orcid: "https://orcid.org/0000-0000-0000-0000"
+title: "NPP (Number of Precipitation Peak)"
 version: "1.0.0"
 date-released: "2026-08-20"
 url: "https://github.com/ZijieZhaoMMHW/precip_peak"
