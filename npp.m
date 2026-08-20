@@ -92,7 +92,7 @@ for i = 1:length(x)
     orders = order;
     bint = bint(:, 1) .* bint(:, 2);
 
-    while any(bint((end - 1):end) > 0) || orders == 1
+    while any(bint((end - 1):end) > 0) || order == 1
         order = order + 1;
         X = design_harmonics_local(1:length(ts_here), opt.Period, order);
         [b, bint, ~, ~, stats] = regress(ts_here, X);
