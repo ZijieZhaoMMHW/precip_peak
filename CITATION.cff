@@ -3,7 +3,6 @@ message: "If you use this software, please cite it as below."
 authors:
   - family-names: "Zhao"
     given-names: "Zijie"
-    orcid: "https://orcid.org/0000-0000-0000-0000"
 title: "NPP (Number of Precipitation Peak)"
 version: "1.0.0"
 date-released: "2026-08-20"
