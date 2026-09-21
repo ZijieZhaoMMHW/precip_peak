@@ -7,7 +7,7 @@ function varargout = npp(precip, date_used, varargin)
 %   datetime array, or datenum vector with one date per time step. Leap days
 %   are removed before fitting.
 %
-%   [NUMP, ORDERM, RSM, RM31, RM61, RM91, LOCP, HARMONICSS] =
+%   [NUMP, ORDERM, RSM, RM31, RM61, RM91, HARMONICSS] =
 %   IDENTIFY_NPP_FROM_PRECIP(...) returns the original output variables used
 %   by the CPC subsection workflow.
 %
@@ -63,7 +63,6 @@ ncol = size(precip, 2);
 orderm = NaN(nrow, ncol);
 nump = NaN(nrow, ncol);
 rsm = NaN(nrow, ncol);
-locp = cell(nrow, ncol);
 harmonicss = NaN(nrow, ncol, opt.Period);
 
 rainy_thresholds = opt.RainyPeriodThresholds(:)';
@@ -84,10 +83,10 @@ for i = 1:length(x)
 
     order = 1;
     X = design_harmonics_local(1:length(ts_here), opt.Period, order);
-    [b, bint, ~, ~, stats] = regress(detrend(ts_here) + nanmean(ts_here), X);
+    [b, bint, ~, ~, stats] = regress(ts_here, X);
     n = length(ts_here);
     rss = nansum((X * b - ts_here).^2);
-    aics = n * log(rss / n) + size(X, 2);
+    aics = n * log(rss / n) + 2 * size(X, 2);
     rs = stats(1);
     orders = order;
     bint = bint(:, 1) .* bint(:, 2);
@@ -99,7 +98,7 @@ for i = 1:length(x)
         bint = bint(:, 1) .* bint(:, 2);
         n = length(ts_here);
         rss = nansum((X * b - ts_here).^2);
-        aics = [aics; n * log(rss / n) + size(X, 2)];
+        aics = [aics; n * log(rss / n) + 2 * size(X, 2)];
         orders = [orders; order];
         rs = [rs; stats(1)];
     end
@@ -143,6 +142,9 @@ for i = 1:length(x)
         pks = [harmonics(1); pks];
         locs = [1; locs];
     end
+    idx_here = pks >= nanmean(harmonics);
+    pks = pks(idx_here);
+    locs = locs(idx_here);
 
     [~, locs_l] = findpeaks(-harmonics);
     if harmonics(end) <= harmonics(end - 1) && harmonics(end) <= harmonics(1)
@@ -178,12 +180,12 @@ for i = 1:length(x)
 
     locs(troughs <= opt.PeakDropThreshold) = [];
     pks(troughs <= opt.PeakDropThreshold) = [];
+    troughs(troughs <= opt.PeakDropThreshold) = [];
 
     idx_rm = [];
     for l = 1:length(pks)
         locs_here = (locs(l) - 15):(locs(l) + 15);
-        locs_here(locs_here < 1) = opt.Period - locs_here(locs_here < 1);
-        locs_here(locs_here > opt.Period) = locs_here(locs_here > opt.Period) - opt.Period;
+        locs_here = mod(locs_here - 1, opt.Period) + 1;
 
         if pks(l) < nanmax(harmonics(locs_here))
             idx_rm = [idx_rm; l];
@@ -192,49 +194,78 @@ for i = 1:length(x)
 
     pks(idx_rm) = [];
     locs(idx_rm) = [];
+    troughs(idx_rm) = [];
 
-    dif_locs = diff(locs);
-    dif_pks = NaN(length(dif_locs), 1);
-    for l = 1:length(dif_locs)
-        maxp = nanmax(harmonics(locs(l):locs(l + 1))) - nanmean(harmonics);
-        minp = nanmin(harmonics(locs(l):locs(l + 1))) - nanmean(harmonics);
+    pks = pks(:);
+    locs = locs(:);
+    troughs = troughs(:);
 
-        dif_pks(l) = (maxp - minp) ./ maxp;
-    end
+    if length(locs) > 1
+        keep_merging = true;
 
-    while any((dif_locs < opt.MergeDaysLoose & dif_pks <= opt.MergePeakDiffThreshold) | (dif_locs < opt.MergeDaysStrict))
-        idx_pot = find((dif_locs < opt.MergeDaysLoose & dif_pks <= opt.MergePeakDiffThreshold) | (dif_locs < opt.MergeDaysStrict));
+        while keep_merging && length(locs) > 1
+            [locs, r] = sort(locs);
+            pks = pks(r);
+            troughs = troughs(r);
 
-        pks_add = (pks(idx_pot + 1) + pks(idx_pot)) / 2;
-        locs_add = round((locs(idx_pot + 1) + locs(idx_pot)) / 2);
+            m = length(locs);
+            dif_locs = diff([locs; locs(1) + opt.Period]);
+            dif_pks = NaN(m, 1);
 
-        pks(unique([idx_pot idx_pot + 1])) = [];
-        locs(unique([idx_pot idx_pot + 1])) = [];
+            for l = 1:m
+                if l < m
+                    seg = harmonics(locs(l):locs(l + 1));
+                else
+                    seg = [harmonics(locs(l):opt.Period); harmonics(1:locs(1))];
+                end
 
-        pks = [pks; pks_add];
-        locs = [locs; locs_add];
-        [locs, r] = sort(locs);
-        pks = pks(r);
+                maxp = nanmax(seg);
+                minp = nanmin(seg);
+                dif_pks(l) = (maxp - minp) ./ maxp;
+            end
 
-        dif_locs = diff(locs);
-        dif_pks = NaN(length(dif_locs), 1);
-        for l = 1:length(dif_locs)
-            maxp = nanmax(harmonics(locs(l):locs(l + 1)));
-            minp = nanmin(harmonics(locs(l):locs(l + 1)));
+            idx_pot = find((dif_locs < opt.MergeDaysLoose & dif_pks <= opt.MergePeakDiffThreshold) | ...
+                (dif_locs < opt.MergeDaysStrict), 1, 'first');
 
-            dif_pks(l) = (maxp - minp) ./ maxp;
+            if isempty(idx_pot)
+                keep_merging = false;
+            else
+                l1 = idx_pot;
+                l2 = mod(idx_pot, m) + 1;
+
+                pks_add = (pks(l1) + pks(l2)) / 2;
+                troughs_add = (troughs(l1) + troughs(l2)) / 2;
+
+                if l1 < m
+                    locs_add = round((locs(l1) + locs(l2)) / 2);
+                else
+                    locs_add = mod(round((locs(l1) + locs(l2) + opt.Period) / 2) - 1, opt.Period) + 1;
+                end
+
+                rm_idx = sort([l1, l2], 'descend');
+                pks(rm_idx) = [];
+                locs(rm_idx) = [];
+                troughs(rm_idx) = [];
+
+                pks = [pks; pks_add];
+                locs = [locs; locs_add];
+                troughs = [troughs; troughs_add];
+            end
         end
     end
 
-    locp{x(i), y(i)} = sort(locs);
+    [locs, r] = sort(locs);
+    pks = pks(r);
+    troughs = troughs(r);
+
     nump(x(i), y(i)) = length(pks);
 end
+nump(nump==0)=1;
 
 out = struct();
 out.nump = nump;
 out.orderm = orderm;
 out.rsm = rsm;
-out.locp = locp;
 out.harmonicss = harmonicss;
 out.rainy_counts = rainy_counts;
 out.rainy_thresholds = rainy_thresholds;
@@ -252,7 +283,7 @@ out.rm91 = rm91;
 if nargout <= 1
     varargout = {out};
 else
-    varargout = {nump, orderm, rsm, rm31, rm61, rm91, locp, harmonicss};
+    varargout = {nump, orderm, rsm, rm31, rm61, rm91, harmonicss};
 end
 
 end
@@ -286,3 +317,4 @@ else
     rm = rainy_counts(:, :, idx);
 end
 end
+
